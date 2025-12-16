@@ -60,7 +60,7 @@ import stem.control
 import stem.descriptor.router_status_entry
 import stem.util.log
 
-from nyx import tor_controller
+from nyx import tor_controller, controller_cache
 from stem.util import conf, connection, enum, proc, str_tools, system
 
 CONFIG = conf.config_dict('nyx', {
@@ -833,7 +833,7 @@ class ConsensusTracker(object):
 
   def _update(self, consensus_content):
     start_time = time.time()
-    our_fingerprint = tor_controller().get_info('fingerprint', None)
+    our_fingerprint = controller_cache.get_fingerprint(None)
 
     with nyx.cache().write() as writer:
       for line in consensus_content.splitlines():
@@ -882,7 +882,7 @@ class ConsensusTracker(object):
 
     if not fingerprint:
       return None
-    elif fingerprint == controller.get_info('fingerprint', None):
+    elif fingerprint == controller_cache.get_fingerprint(None):
       return controller.get_conf('Nickname', 'Unnamed')
     else:
       return nyx.cache().relay_nickname(fingerprint)
@@ -898,8 +898,8 @@ class ConsensusTracker(object):
 
     controller = tor_controller()
 
-    if controller.get_info('address', None) == address:
-      fingerprint = controller.get_info('fingerprint', None)
+    if controller_cache.get_address(None) == address:
+      fingerprint = controller_cache.get_fingerprint(None)
       ports = controller.get_ports(stem.control.Listener.OR, None)
 
       if fingerprint and ports:
@@ -918,8 +918,8 @@ class ConsensusTracker(object):
 
     controller = tor_controller()
 
-    if fingerprint == controller.get_info('fingerprint', None):
-      my_address = controller.get_info('address', None)
+    if fingerprint == controller_cache.get_fingerprint(None):
+      my_address = controller_cache.get_address(None)
       my_or_ports = controller.get_ports(stem.control.Listener.OR, [])
 
       if my_address and len(my_or_ports) == 1:
