@@ -17,7 +17,7 @@ import nyx.panel
 import nyx.popups
 import nyx.tracker
 
-from nyx import nyx_interface, tor_controller
+from nyx import nyx_interface, tor_controller, controller_cache
 from nyx.curses import WHITE, NORMAL, BOLD, HIGHLIGHT
 from nyx.menu import MenuItem, Submenu, RadioMenuItem, RadioGroup
 
@@ -611,7 +611,7 @@ def _draw_line(subwindow, x, y, line, is_selected, width, current_time):
 
 
 def _draw_address_column(subwindow, x, y, line, attr):
-  src = tor_controller().get_info('address', line.connection.local_address)
+  src = controller_cache.get_address(line.connection.local_address)
 
   if line.line_type == LineType.CONNECTION:
     src = '%s:%s' % (src, line.connection.local_port)

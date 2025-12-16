@@ -60,7 +60,7 @@ import stem.control
 import stem.descriptor.router_status_entry
 import stem.util.log
 
-from nyx import tor_controller
+from nyx import tor_controller, controller_cache
 from stem.util import conf, connection, enum, proc, str_tools, system
 
 CONFIG = conf.config_dict('nyx', {
@@ -811,9 +811,6 @@ class ConsensusTracker(object):
     self._my_router_status_entry = None
     self._my_router_status_entry_time = 0
 
-    self._our_fingerprint = None
-    self._our_fingerprint_time = 0
-
     # Stem's get_network_statuses() is slow, and overkill for what we need
     # here. Just parsing the raw GETINFO response to cut startup time down.
     #
@@ -836,7 +833,7 @@ class ConsensusTracker(object):
 
   def _update(self, consensus_content):
     start_time = time.time()
-    our_fingerprint = self.get_fingerprint(None)
+    our_fingerprint = controller_cache.get_fingerprint(None)
 
     with nyx.cache().write() as writer:
       for line in consensus_content.splitlines():
@@ -885,7 +882,7 @@ class ConsensusTracker(object):
 
     if not fingerprint:
       return None
-    elif fingerprint == self.get_fingerprint(None):
+    elif fingerprint == controller_cache.get_fingerprint(None):
       return controller.get_conf('Nickname', 'Unnamed')
     else:
       return nyx.cache().relay_nickname(fingerprint)
@@ -901,8 +898,8 @@ class ConsensusTracker(object):
 
     controller = tor_controller()
 
-    if controller.get_info('address', None) == address:
-      fingerprint = self.get_fingerprint(None)
+    if controller_cache.get_address(None) == address:
+      fingerprint = controller_cache.get_fingerprint(None)
       ports = controller.get_ports(stem.control.Listener.OR, None)
 
       if fingerprint and ports:
@@ -921,7 +918,7 @@ class ConsensusTracker(object):
 
     controller = tor_controller()
 
-    if fingerprint == self.get_fingerprint(None):
+    if fingerprint == controller_cache.get_fingerprint(None):
       my_address = controller.get_info('address', None)
       my_or_ports = controller.get_ports(stem.control.Listener.OR, [])
 
@@ -930,21 +927,4 @@ class ConsensusTracker(object):
 
     return nyx.cache().relay_address(fingerprint, default)
 
-  def get_fingerprint(self, default = None):
-    """
-    Provides our own fingerprint, utilizing a cache that's refreshed every
-    5 minutes.
 
-    :param str default: value to return if we can't determine our fingerprint
-
-    :returns: **str** with our fingerprint, or **default** if it can't be
-      determined
-    """
-
-    controller = tor_controller()
-
-    if time.time() - self._our_fingerprint_time > 300:
-      self._our_fingerprint = controller.get_info('fingerprint', default)
-      self._our_fingerprint_time = time.time()
-
-    return self._our_fingerprint
