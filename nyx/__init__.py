@@ -51,6 +51,7 @@ import platform
 import sys
 import threading
 import time
+import tracemalloc
 
 # mapping of package managers to their stem installation command
 
@@ -204,6 +205,7 @@ def main():
 
 
 def draw_loop():
+  tracemalloc.start(25)  # capture up to 25 stack frames
   interface = nyx_interface()
   next_key = None  # use this as the next user input
 
@@ -250,6 +252,91 @@ def draw_loop():
           stem.util.log.error('Error detected when reloading tor: %s' % exc.strerror)
     elif key.match('h'):
       next_key = nyx.popups.show_help()
+    elif key.match('d'):
+      snapshot = tracemalloc.take_snapshot()
+      timestamp = time.strftime('%Y%m%d_%H%M%S')
+      snapshot_filename = f'nyx_memory_profile_runtime_{timestamp}.txt'
+      with open(snapshot_filename, 'w') as f:
+        f.write('Top 20 memory allocations by line (runtime dump):\n')
+        for stat in snapshot.statistics('lineno')[:20]:
+          f.write(str(stat) + '\n')
+        
+        f.write('\n\nTop 10 memory allocations with stack traces:\n')
+        f.write('=' * 80 + '\n')
+        for stat in snapshot.statistics('traceback')[:10]:
+          f.write(f'\n{stat}\n')
+          for line in stat.traceback.format():
+            f.write(f'  {line}\n')
+        
+        # Add object type analysis
+        f.write('\n\nMemory usage by object type:\n')
+        f.write('=' * 80 + '\n')
+        import gc
+        type_stats = {}
+        for obj in gc.get_objects():
+          obj_type = type(obj).__name__
+          try:
+            size = sys.getsizeof(obj)
+            if obj_type not in type_stats:
+              type_stats[obj_type] = {'count': 0, 'size': 0}
+            type_stats[obj_type]['count'] += 1
+            type_stats[obj_type]['size'] += size
+          except:
+            pass
+        
+        sorted_types = sorted(type_stats.items(), key=lambda x: x[1]['size'], reverse=True)[:20]
+        for obj_type, stats in sorted_types:
+          size_mb = stats['size'] / (1024 * 1024)
+          f.write(f"{obj_type:30} count: {stats['count']:8,} size: {size_mb:8.2f} MiB\n")
+        
+        # Add detailed allocation breakdown by location with symbol names
+        f.write('\n\nTop allocations by location (with context):\n')
+        f.write('=' * 80 + '\n')
+        
+        import linecache
+        def get_symbol_name(filename, lineno):
+          """Extract function/class name for a given line."""
+          try:
+            # Scan backwards to find the enclosing function or class
+            for i in range(lineno, max(1, lineno - 100), -1):
+              line = linecache.getline(filename, i).strip()
+              if line.startswith('def ') or line.startswith('async def '):
+                # Extract function name
+                name = line.split('(')[0].replace('def ', '').replace('async ', '').strip()
+                return name
+              elif line.startswith('class '):
+                # Extract class name
+                name = line.split('(')[0].replace('class ', '').replace(':', '').strip()
+                return name
+            return ''
+          except:
+            return ''
+        
+        # Get detailed stats with tracebacks
+        for stat in snapshot.statistics('lineno')[:30]:
+          size_kb = stat.size / 1024
+          # Shorten filename for readability
+          filename = stat.traceback[0].filename
+          lineno = stat.traceback[0].lineno
+          short_filename = filename
+          if '/nyx/' in filename:
+            short_filename = filename[filename.rindex('/nyx/')+5:]
+          elif '/stem/' in filename:
+            short_filename = filename[filename.rindex('/stem/')+6:]
+          
+          # Get symbol name
+          symbol = get_symbol_name(filename, lineno)
+          symbol_str = f" in {symbol}()" if symbol else ""
+          
+          # Get the actual source line for context
+          source_line = linecache.getline(filename, lineno).strip()
+          if len(source_line) > 70:
+            source_line = source_line[:67] + "..."
+          
+          f.write(f"  {short_filename:40}:{lineno:<5}{symbol_str:30} │ {stat.count:6,} objs │ {size_kb:8.1f} KiB\n")
+          f.write(f"    → {source_line}\n")
+      show_message(f'Memory profile dumped to {snapshot_filename}')
+      threading.Timer(5.0, lambda: show_message()).start()
     elif not key.is_null():
       for panel in interface.page_panels():
         for keybinding in panel.key_handlers():
@@ -756,6 +843,90 @@ class Interface(object):
 
       for panel in daemons:
         panel.join()
+
+      # Dump memory profile
+      snapshot = tracemalloc.take_snapshot()
+      timestamp = time.strftime('%Y%m%d_%H%M%S')
+      snapshot_filename = f'nyx_memory_profile_{timestamp}.txt'
+      with open(snapshot_filename, 'w') as f:
+        f.write('Top 20 memory allocations by line:\n')
+        for stat in snapshot.statistics('lineno')[:20]:
+          f.write(str(stat) + '\n')
+        
+        f.write('\n\nTop 10 memory allocations with stack traces:\n')
+        f.write('=' * 80 + '\n')
+        for stat in snapshot.statistics('traceback')[:10]:
+          f.write(f'\n{stat}\n')
+          for line in stat.traceback.format():
+            f.write(f'  {line}\n')
+        
+        # Add object type analysis
+        f.write('\n\nMemory usage by object type:\n')
+        f.write('=' * 80 + '\n')
+        import gc
+        type_stats = {}
+        for obj in gc.get_objects():
+          obj_type = type(obj).__name__
+          try:
+            size = sys.getsizeof(obj)
+            if obj_type not in type_stats:
+              type_stats[obj_type] = {'count': 0, 'size': 0}
+            type_stats[obj_type]['count'] += 1
+            type_stats[obj_type]['size'] += size
+          except:
+            pass
+        
+        sorted_types = sorted(type_stats.items(), key=lambda x: x[1]['size'], reverse=True)[:20]
+        for obj_type, stats in sorted_types:
+          size_mb = stats['size'] / (1024 * 1024)
+          f.write(f"{obj_type:30} count: {stats['count']:8,} size: {size_mb:8.2f} MiB\n")
+        
+        # Add detailed allocation breakdown by location with symbol names
+        f.write('\n\nTop allocations by location (with context):\n')
+        f.write('=' * 80 + '\n')
+        
+        import linecache
+        def get_symbol_name(filename, lineno):
+          """Extract function/class name for a given line."""
+          try:
+            # Scan backwards to find the enclosing function or class
+            for i in range(lineno, max(1, lineno - 100), -1):
+              line = linecache.getline(filename, i).strip()
+              if line.startswith('def ') or line.startswith('async def '):
+                # Extract function name
+                name = line.split('(')[0].replace('def ', '').replace('async ', '').strip()
+                return name
+              elif line.startswith('class '):
+                # Extract class name
+                name = line.split('(')[0].replace('class ', '').replace(':', '').strip()
+                return name
+            return ''
+          except:
+            return ''
+        
+        # Get detailed stats with line numbers
+        for stat in snapshot.statistics('lineno')[:30]:
+          size_kb = stat.size / 1024
+          # Shorten filename for readability
+          filename = stat.traceback[0].filename
+          lineno = stat.traceback[0].lineno
+          short_filename = filename
+          if '/nyx/' in filename:
+            short_filename = filename[filename.rindex('/nyx/')+5:]
+          elif '/stem/' in filename:
+            short_filename = filename[filename.rindex('/stem/')+6:]
+          
+          # Get symbol name
+          symbol = get_symbol_name(filename, lineno)
+          symbol_str = f" in {symbol}()" if symbol else ""
+          
+          # Get the actual source line for context
+          source_line = linecache.getline(filename, lineno).strip()
+          if len(source_line) > 70:
+            source_line = source_line[:67] + "..."
+          
+          f.write(f"  {short_filename:40}:{lineno:<5}{symbol_str:30} │ {stat.count:6,} objs │ {size_kb:8.1f} KiB\n")
+          f.write(f"    → {source_line}\n")
 
     halt_thread = threading.Thread(target = halt_panels)
     halt_thread.start()
