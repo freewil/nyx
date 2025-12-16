@@ -2,7 +2,14 @@
 # Copyright 2009-2019, Damian Johnson and The Tor Project
 # See LICENSE for licensing information
 
+import os
 import sys
+
+# Use local stem development version
+stem_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'stem')
+if os.path.exists(stem_path):
+  print('using local dev stem version\n')
+  sys.path.insert(0, stem_path)
 
 import nyx
 import nyx.curses
