@@ -10,6 +10,7 @@ import time
 
 from nyx import tor_controller
 
+CACHE_DURATION = 300  # refresh cache every 5 minutes
 
 class ControllerCache(object):
   """Namespace for cache state."""
@@ -23,7 +24,7 @@ class ControllerCache(object):
 
 def get_address(default=None):
   """
-  Provides our own address, utilizing a cache that's refreshed every 5 minutes.
+  Provides our own address, utilizing a cache that's refreshed every CACHE_DURATION seconds.
 
   :param str default: value to return if we can't determine our address
 
@@ -32,7 +33,7 @@ def get_address(default=None):
 
   controller = tor_controller()
 
-  if time.time() - ControllerCache._address_time > 300:
+  if time.time() - ControllerCache._address_time > CACHE_DURATION:
     ControllerCache._address = controller.get_info('address', None)
     ControllerCache._address_time = time.time()
 
@@ -41,7 +42,7 @@ def get_address(default=None):
 
 def get_fingerprint(default=None):
   """
-  Provides our own fingerprint, utilizing a cache that's refreshed every 5 minutes.
+  Provides our own fingerprint, utilizing a cache that's refreshed every CACHE_DURATION seconds.
 
   :param str default: value to return if we can't determine our fingerprint
 
@@ -50,7 +51,7 @@ def get_fingerprint(default=None):
 
   controller = tor_controller()
 
-  if time.time() - ControllerCache._fingerprint_time > 300:
+  if time.time() - ControllerCache._fingerprint_time > CACHE_DURATION:
     ControllerCache._fingerprint = controller.get_info('fingerprint', None)
     ControllerCache._fingerprint_time = time.time()
 
@@ -59,7 +60,7 @@ def get_fingerprint(default=None):
 
 def get_exit_policy(default=None):
   """
-  Provides our exit policy, utilizing a cache that's refreshed every 5 minutes.
+  Provides our exit policy, utilizing a cache that's refreshed every CACHE_DURATION seconds.
 
   :param default: value to return if we can't determine our exit policy
 
@@ -68,7 +69,7 @@ def get_exit_policy(default=None):
 
   controller = tor_controller()
 
-  if time.time() - ControllerCache._exit_policy_time > 300:
+  if time.time() - ControllerCache._exit_policy_time > CACHE_DURATION:
     ControllerCache._exit_policy = controller.get_exit_policy(None)
     ControllerCache._exit_policy_time = time.time()
 
