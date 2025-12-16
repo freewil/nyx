@@ -216,7 +216,7 @@ class ConnectionEntry(Entry):
           return Category.HIDDEN
 
     fingerprint = nyx.tracker.get_consensus_tracker().get_relay_fingerprints(self._connection.remote_address).get(self._connection.remote_port)
-    exit_policy = controller.get_exit_policy(None)
+    exit_policy = controller_cache.get_exit_policy(None)
 
     if fingerprint and LAST_RETRIEVED_CIRCUITS:
       for circ in LAST_RETRIEVED_CIRCUITS:

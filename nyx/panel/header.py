@@ -23,7 +23,7 @@ import nyx.popups
 import nyx.tracker
 
 from stem.util import conf, log
-from nyx import nyx_interface, tor_controller
+from nyx import nyx_interface, tor_controller, controller_cache
 
 from nyx.curses import RED, GREEN, YELLOW, CYAN, WHITE, BOLD, HIGHLIGHT
 
@@ -259,16 +259,16 @@ class Sampling(object):
       'connection_time': controller.connection_time(),
       'last_heartbeat': controller.get_latest_heartbeat(),
 
-      'fingerprint': controller.get_info('fingerprint', 'Unknown'),
+      'fingerprint': controller_cache.get_fingerprint('Unknown'),
       'nickname': controller.get_conf('Nickname', ''),
       'newnym_wait': controller.get_newnym_wait(),
-      'exit_policy': controller.get_exit_policy(None),
+      'exit_policy': controller_cache.get_exit_policy(None),
       'flags': getattr(my_router_status_entry, 'flags', []),
 
       'version': str(controller.get_version('Unknown')).split()[0],
       'version_status': controller.get_info('status/version/current', 'Unknown'),
 
-      'address': or_listeners[0][0] if (or_listeners and or_listeners[0][0] != '0.0.0.0') else controller.get_info('address', 'Unknown'),
+      'address': or_listeners[0][0] if (or_listeners and or_listeners[0][0] != '0.0.0.0') else controller_cache.get_address('Unknown'),
       'or_port': or_listeners[0][1] if or_listeners else '',
       'dir_port': controller.get_conf('DirPort', '0'),
       'control_port': str(control_listeners[0][1]) if control_listeners else None,

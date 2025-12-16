@@ -17,6 +17,8 @@ class ControllerCache(object):
   _address_time = 0
   _fingerprint = None
   _fingerprint_time = 0
+  _exit_policy = None
+  _exit_policy_time = 0
 
 
 def get_address(default=None):
@@ -53,3 +55,21 @@ def get_fingerprint(default=None):
     ControllerCache._fingerprint_time = time.time()
 
   return ControllerCache._fingerprint if ControllerCache._fingerprint is not None else default
+
+
+def get_exit_policy(default=None):
+  """
+  Provides our exit policy, utilizing a cache that's refreshed every 5 minutes.
+
+  :param default: value to return if we can't determine our exit policy
+
+  :returns: exit policy, or **default** if it can't be determined
+  """
+
+  controller = tor_controller()
+
+  if time.time() - ControllerCache._exit_policy_time > 300:
+    ControllerCache._exit_policy = controller.get_exit_policy(None)
+    ControllerCache._exit_policy_time = time.time()
+
+  return ControllerCache._exit_policy if ControllerCache._exit_policy is not None else default
