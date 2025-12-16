@@ -407,9 +407,21 @@ def draw_loop():
   interface = nyx_interface()
   next_key = None  # use this as the next user input
   
-  # Track time for automatic memory dumps every 10 minutes
-  last_auto_dump_time = time.time()
-  auto_dump_interval = 600  # 10 minutes in seconds
+  # Start background thread for automatic memory dumps every 10 minutes
+  def auto_dump_thread():
+    """Background thread that creates memory dumps every 10 minutes."""
+    auto_dump_interval = 600  # 10 minutes in seconds
+    while not interface._quit:
+      time.sleep(auto_dump_interval)
+      if not interface._quit:
+        try:
+          snapshot_filename = dump_memory_profile('auto')
+          stem.util.log.info(f'Automatic memory profile dumped to {snapshot_filename}')
+        except Exception as exc:
+          stem.util.log.warn(f'Failed to create automatic memory dump: {exc}')
+  
+  dump_thread = threading.Thread(target=auto_dump_thread, daemon=True)
+  dump_thread.start()
 
   # Redrawing before starting daemons is important so our interface is rendered
   # right away and the 'top' positions are set for our panels.
@@ -423,15 +435,6 @@ def draw_loop():
   stem.util.log.info('nyx started (initialization took %0.1f seconds)' % (time.time() - CONFIG['start_time']))
 
   while not interface._quit:
-    # Check if it's time for an automatic memory dump
-    current_time = time.time()
-    if current_time - last_auto_dump_time >= auto_dump_interval:
-      try:
-        snapshot_filename = dump_memory_profile('auto')
-        stem.util.log.info(f'Automatic memory profile dumped to {snapshot_filename}')
-        last_auto_dump_time = current_time
-      except Exception as exc:
-        stem.util.log.warn(f'Failed to create automatic memory dump: {exc}')
     if next_key:
       key, next_key = next_key, None
     else:
