@@ -196,6 +196,204 @@ except IOError as exc:
   sys.exit(1)
 
 
+def dump_memory_profile(filename_suffix='runtime'):
+  """
+  Creates a comprehensive memory profile dump including tracemalloc snapshots,
+  object type analysis, and GC diagnostics.
+  
+  :param str filename_suffix: suffix to add to filename (e.g., 'runtime' or 'shutdown')
+  :returns: str with the filename that was written
+  """
+  import gc
+  import linecache
+  import types
+  import os
+  
+  snapshot = tracemalloc.take_snapshot()
+  timestamp = time.strftime('%Y%m%d_%H%M%S')
+  pid = os.getpid()
+  elapsed_minutes = int((time.time() - CONFIG['start_time']) / 60)
+  snapshot_filename = f'nyx_memory_profile_{filename_suffix}_{elapsed_minutes}min_pid{pid}_{timestamp}.txt'
+  
+  with open(snapshot_filename, 'w') as f:
+    f.write(f'Top 20 memory allocations by line ({filename_suffix} dump):\n')
+    for stat in snapshot.statistics('lineno')[:20]:
+      f.write(str(stat) + '\n')
+    
+    f.write('\n\nTop 10 memory allocations with stack traces:\n')
+    f.write('=' * 80 + '\n')
+    for stat in snapshot.statistics('traceback')[:10]:
+      f.write(f'\n{stat}\n')
+      for line in stat.traceback.format():
+        f.write(f'  {line}\n')
+    
+    # Add object type analysis
+    f.write('\n\nMemory usage by object type:\n')
+    f.write('=' * 80 + '\n')
+    type_stats = {}
+    for obj in gc.get_objects():
+      obj_type = type(obj).__name__
+      try:
+        size = sys.getsizeof(obj)
+        if obj_type not in type_stats:
+          type_stats[obj_type] = {'count': 0, 'size': 0}
+        type_stats[obj_type]['count'] += 1
+        type_stats[obj_type]['size'] += size
+      except:
+        pass
+    
+    sorted_types = sorted(type_stats.items(), key=lambda x: x[1]['size'], reverse=True)[:20]
+    for obj_type, stats in sorted_types:
+      size_mb = stats['size'] / (1024 * 1024)
+      f.write(f"{obj_type:30} count: {stats['count']:8,} size: {size_mb:8.2f} MiB\n")
+    
+    # Add detailed allocation breakdown by location with symbol names
+    f.write('\n\nTop allocations by location (with context):\n')
+    f.write('=' * 80 + '\n')
+    
+    def get_symbol_name(filename, lineno):
+      """Extract function/class name for a given line."""
+      try:
+        # Scan backwards to find the enclosing function or class
+        for i in range(lineno, max(1, lineno - 100), -1):
+          line = linecache.getline(filename, i).strip()
+          if line.startswith('def ') or line.startswith('async def '):
+            # Extract function name
+            name = line.split('(')[0].replace('def ', '').replace('async ', '').strip()
+            return name
+          elif line.startswith('class '):
+            # Extract class name
+            name = line.split('(')[0].replace('class ', '').replace(':', '').strip()
+            return name
+        return ''
+      except:
+        return ''
+    
+    # Get detailed stats with tracebacks
+    for stat in snapshot.statistics('lineno')[:30]:
+      size_kb = stat.size / 1024
+      # Shorten filename for readability
+      filename = stat.traceback[0].filename
+      lineno = stat.traceback[0].lineno
+      short_filename = filename
+      if '/nyx/' in filename:
+        short_filename = filename[filename.rindex('/nyx/')+5:]
+      elif '/stem/' in filename:
+        short_filename = filename[filename.rindex('/stem/')+6:]
+      
+      # Get symbol name
+      symbol = get_symbol_name(filename, lineno)
+      symbol_str = f" in {symbol}()" if symbol else ""
+      
+      # Get the actual source line for context
+      source_line = linecache.getline(filename, lineno).strip()
+      if len(source_line) > 70:
+        source_line = source_line[:67] + "..."
+      
+      f.write(f"  {short_filename:40}:{lineno:<5}{symbol_str:30} │ {stat.count:6,} objs │ {size_kb:8.1f} KiB\n")
+      f.write(f"    → {source_line}\n")
+    
+    # Add GC diagnostics for Sampling objects
+    f.write('\n\nGarbage Collector Diagnostics:\n')
+    f.write('=' * 80 + '\n')
+    
+    # Force garbage collection and report
+    collected = gc.collect()
+    f.write(f'Garbage collection freed {collected} objects\n')
+    f.write(f'GC stats: {gc.get_stats()}\n')
+    f.write(f'GC thresholds: {gc.get_threshold()}\n')
+    f.write(f'GC counts: {gc.get_count()}\n')
+    f.write(f'Uncollectable garbage: {len(gc.garbage)} objects\n\n')
+    
+    # Analyze Sampling objects specifically
+    f.write('Sampling Object Analysis:\n')
+    f.write('-' * 80 + '\n')
+    
+    from nyx.panel.header import Sampling
+    sampling_objects = [obj for obj in gc.get_objects() if isinstance(obj, Sampling)]
+    f.write(f'Total Sampling objects in memory: {len(sampling_objects)}\n\n')
+    
+    if sampling_objects:
+      # Analyze the oldest 5 Sampling objects
+      f.write('Analyzing oldest 5 Sampling objects:\n')
+      for i, obj in enumerate(sampling_objects[:5]):
+        f.write(f'\nSampling object #{i+1}:\n')
+        f.write(f'  Reference count: {sys.getrefcount(obj)}\n')
+        f.write(f'  Object id: {id(obj)}\n')
+        
+        # Get referrers (what's holding references to this object)
+        referrers = gc.get_referrers(obj)
+        f.write(f'  Referrers count: {len(referrers)}\n')
+        f.write('  Referrer types:\n')
+        referrer_types = {}
+        for ref in referrers:
+          ref_type = type(ref).__name__
+          if ref_type not in referrer_types:
+            referrer_types[ref_type] = 0
+          referrer_types[ref_type] += 1
+        for ref_type, count in sorted(referrer_types.items(), key=lambda x: x[1], reverse=True):
+          f.write(f'    {ref_type}: {count}\n')
+        
+        # Check for reference cycles
+        f.write('  Has reference cycle: ')
+        try:
+          # If object refers to itself or its referrers, it's a cycle
+          referents = gc.get_referents(obj)
+          has_cycle = any(ref in referents for ref in referrers)
+          f.write(f'{has_cycle}\n')
+        except:
+          f.write('unknown\n')
+    
+    # Check Resources objects too
+    f.write('\n\nResources Object Analysis:\n')
+    f.write('-' * 80 + '\n')
+    
+    from nyx.tracker import Resources
+    resources_objects = [obj for obj in gc.get_objects() if isinstance(obj, Resources)]
+    f.write(f'Total Resources objects in memory: {len(resources_objects)}\n\n')
+    
+    if len(resources_objects) > 5:
+      f.write('Sample Resources object analysis:\n')
+      sample_obj = resources_objects[0]
+      f.write(f'  Reference count: {sys.getrefcount(sample_obj)}\n')
+      referrers = gc.get_referrers(sample_obj)
+      f.write(f'  Referrers count: {len(referrers)}\n')
+      referrer_types = {}
+      for ref in referrers:
+        ref_type = type(ref).__name__
+        if ref_type not in referrer_types:
+          referrer_types[ref_type] = 0
+        referrer_types[ref_type] += 1
+      f.write('  Referrer types:\n')
+      for ref_type, count in sorted(referrer_types.items(), key=lambda x: x[1], reverse=True)[:10]:
+        f.write(f'    {ref_type}: {count}\n')
+    
+    # Analyze traceback objects
+    f.write('\n\nTraceback Object Analysis:\n')
+    f.write('-' * 80 + '\n')
+    
+    traceback_objects = [obj for obj in gc.get_objects() if isinstance(obj, types.TracebackType)]
+    f.write(f'Total traceback objects in memory: {len(traceback_objects)}\n')
+    
+    if traceback_objects:
+      f.write('\nSample traceback analysis:\n')
+      sample_tb = traceback_objects[0]
+      f.write(f'  Reference count: {sys.getrefcount(sample_tb)}\n')
+      referrers = gc.get_referrers(sample_tb)
+      f.write(f'  Referrers count: {len(referrers)}\n')
+      f.write('  Referrer types:\n')
+      referrer_types = {}
+      for ref in referrers:
+        ref_type = type(ref).__name__
+        if ref_type not in referrer_types:
+          referrer_types[ref_type] = 0
+        referrer_types[ref_type] += 1
+      for ref_type, count in sorted(referrer_types.items(), key=lambda x: x[1], reverse=True)[:10]:
+        f.write(f'    {ref_type}: {count}\n')
+  
+  return snapshot_filename
+
+
 def main():
   try:
     nyx.starter.main()
@@ -208,6 +406,10 @@ def draw_loop():
   tracemalloc.start(25)  # capture up to 25 stack frames
   interface = nyx_interface()
   next_key = None  # use this as the next user input
+  
+  # Track time for automatic memory dumps every 10 minutes
+  last_auto_dump_time = time.time()
+  auto_dump_interval = 600  # 10 minutes in seconds
 
   # Redrawing before starting daemons is important so our interface is rendered
   # right away and the 'top' positions are set for our panels.
@@ -221,6 +423,15 @@ def draw_loop():
   stem.util.log.info('nyx started (initialization took %0.1f seconds)' % (time.time() - CONFIG['start_time']))
 
   while not interface._quit:
+    # Check if it's time for an automatic memory dump
+    current_time = time.time()
+    if current_time - last_auto_dump_time >= auto_dump_interval:
+      try:
+        snapshot_filename = dump_memory_profile('auto')
+        stem.util.log.info(f'Automatic memory profile dumped to {snapshot_filename}')
+        last_auto_dump_time = current_time
+      except Exception as exc:
+        stem.util.log.warn(f'Failed to create automatic memory dump: {exc}')
     if next_key:
       key, next_key = next_key, None
     else:
@@ -253,88 +464,7 @@ def draw_loop():
     elif key.match('h'):
       next_key = nyx.popups.show_help()
     elif key.match('d'):
-      snapshot = tracemalloc.take_snapshot()
-      timestamp = time.strftime('%Y%m%d_%H%M%S')
-      snapshot_filename = f'nyx_memory_profile_runtime_{timestamp}.txt'
-      with open(snapshot_filename, 'w') as f:
-        f.write('Top 20 memory allocations by line (runtime dump):\n')
-        for stat in snapshot.statistics('lineno')[:20]:
-          f.write(str(stat) + '\n')
-        
-        f.write('\n\nTop 10 memory allocations with stack traces:\n')
-        f.write('=' * 80 + '\n')
-        for stat in snapshot.statistics('traceback')[:10]:
-          f.write(f'\n{stat}\n')
-          for line in stat.traceback.format():
-            f.write(f'  {line}\n')
-        
-        # Add object type analysis
-        f.write('\n\nMemory usage by object type:\n')
-        f.write('=' * 80 + '\n')
-        import gc
-        type_stats = {}
-        for obj in gc.get_objects():
-          obj_type = type(obj).__name__
-          try:
-            size = sys.getsizeof(obj)
-            if obj_type not in type_stats:
-              type_stats[obj_type] = {'count': 0, 'size': 0}
-            type_stats[obj_type]['count'] += 1
-            type_stats[obj_type]['size'] += size
-          except:
-            pass
-        
-        sorted_types = sorted(type_stats.items(), key=lambda x: x[1]['size'], reverse=True)[:20]
-        for obj_type, stats in sorted_types:
-          size_mb = stats['size'] / (1024 * 1024)
-          f.write(f"{obj_type:30} count: {stats['count']:8,} size: {size_mb:8.2f} MiB\n")
-        
-        # Add detailed allocation breakdown by location with symbol names
-        f.write('\n\nTop allocations by location (with context):\n')
-        f.write('=' * 80 + '\n')
-        
-        import linecache
-        def get_symbol_name(filename, lineno):
-          """Extract function/class name for a given line."""
-          try:
-            # Scan backwards to find the enclosing function or class
-            for i in range(lineno, max(1, lineno - 100), -1):
-              line = linecache.getline(filename, i).strip()
-              if line.startswith('def ') or line.startswith('async def '):
-                # Extract function name
-                name = line.split('(')[0].replace('def ', '').replace('async ', '').strip()
-                return name
-              elif line.startswith('class '):
-                # Extract class name
-                name = line.split('(')[0].replace('class ', '').replace(':', '').strip()
-                return name
-            return ''
-          except:
-            return ''
-        
-        # Get detailed stats with tracebacks
-        for stat in snapshot.statistics('lineno')[:30]:
-          size_kb = stat.size / 1024
-          # Shorten filename for readability
-          filename = stat.traceback[0].filename
-          lineno = stat.traceback[0].lineno
-          short_filename = filename
-          if '/nyx/' in filename:
-            short_filename = filename[filename.rindex('/nyx/')+5:]
-          elif '/stem/' in filename:
-            short_filename = filename[filename.rindex('/stem/')+6:]
-          
-          # Get symbol name
-          symbol = get_symbol_name(filename, lineno)
-          symbol_str = f" in {symbol}()" if symbol else ""
-          
-          # Get the actual source line for context
-          source_line = linecache.getline(filename, lineno).strip()
-          if len(source_line) > 70:
-            source_line = source_line[:67] + "..."
-          
-          f.write(f"  {short_filename:40}:{lineno:<5}{symbol_str:30} │ {stat.count:6,} objs │ {size_kb:8.1f} KiB\n")
-          f.write(f"    → {source_line}\n")
+      snapshot_filename = dump_memory_profile('runtime')
       show_message(f'Memory profile dumped to {snapshot_filename}')
       threading.Timer(5.0, lambda: show_message()).start()
     elif not key.is_null():
@@ -845,88 +975,7 @@ class Interface(object):
         panel.join()
 
       # Dump memory profile
-      snapshot = tracemalloc.take_snapshot()
-      timestamp = time.strftime('%Y%m%d_%H%M%S')
-      snapshot_filename = f'nyx_memory_profile_{timestamp}.txt'
-      with open(snapshot_filename, 'w') as f:
-        f.write('Top 20 memory allocations by line:\n')
-        for stat in snapshot.statistics('lineno')[:20]:
-          f.write(str(stat) + '\n')
-        
-        f.write('\n\nTop 10 memory allocations with stack traces:\n')
-        f.write('=' * 80 + '\n')
-        for stat in snapshot.statistics('traceback')[:10]:
-          f.write(f'\n{stat}\n')
-          for line in stat.traceback.format():
-            f.write(f'  {line}\n')
-        
-        # Add object type analysis
-        f.write('\n\nMemory usage by object type:\n')
-        f.write('=' * 80 + '\n')
-        import gc
-        type_stats = {}
-        for obj in gc.get_objects():
-          obj_type = type(obj).__name__
-          try:
-            size = sys.getsizeof(obj)
-            if obj_type not in type_stats:
-              type_stats[obj_type] = {'count': 0, 'size': 0}
-            type_stats[obj_type]['count'] += 1
-            type_stats[obj_type]['size'] += size
-          except:
-            pass
-        
-        sorted_types = sorted(type_stats.items(), key=lambda x: x[1]['size'], reverse=True)[:20]
-        for obj_type, stats in sorted_types:
-          size_mb = stats['size'] / (1024 * 1024)
-          f.write(f"{obj_type:30} count: {stats['count']:8,} size: {size_mb:8.2f} MiB\n")
-        
-        # Add detailed allocation breakdown by location with symbol names
-        f.write('\n\nTop allocations by location (with context):\n')
-        f.write('=' * 80 + '\n')
-        
-        import linecache
-        def get_symbol_name(filename, lineno):
-          """Extract function/class name for a given line."""
-          try:
-            # Scan backwards to find the enclosing function or class
-            for i in range(lineno, max(1, lineno - 100), -1):
-              line = linecache.getline(filename, i).strip()
-              if line.startswith('def ') or line.startswith('async def '):
-                # Extract function name
-                name = line.split('(')[0].replace('def ', '').replace('async ', '').strip()
-                return name
-              elif line.startswith('class '):
-                # Extract class name
-                name = line.split('(')[0].replace('class ', '').replace(':', '').strip()
-                return name
-            return ''
-          except:
-            return ''
-        
-        # Get detailed stats with line numbers
-        for stat in snapshot.statistics('lineno')[:30]:
-          size_kb = stat.size / 1024
-          # Shorten filename for readability
-          filename = stat.traceback[0].filename
-          lineno = stat.traceback[0].lineno
-          short_filename = filename
-          if '/nyx/' in filename:
-            short_filename = filename[filename.rindex('/nyx/')+5:]
-          elif '/stem/' in filename:
-            short_filename = filename[filename.rindex('/stem/')+6:]
-          
-          # Get symbol name
-          symbol = get_symbol_name(filename, lineno)
-          symbol_str = f" in {symbol}()" if symbol else ""
-          
-          # Get the actual source line for context
-          source_line = linecache.getline(filename, lineno).strip()
-          if len(source_line) > 70:
-            source_line = source_line[:67] + "..."
-          
-          f.write(f"  {short_filename:40}:{lineno:<5}{symbol_str:30} │ {stat.count:6,} objs │ {size_kb:8.1f} KiB\n")
-          f.write(f"    → {source_line}\n")
+      dump_memory_profile('shutdown')
 
     halt_thread = threading.Thread(target = halt_panels)
     halt_thread.start()
