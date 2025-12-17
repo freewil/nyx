@@ -862,7 +862,7 @@ class ConsensusTracker(object):
       for ourselves, **None** if it cannot be retrieved
     """
 
-    if self._my_router_status_entry is None or (time.time() - self._my_router_status_entry_time) > 300:
+    if time.time() - self._my_router_status_entry_time > 300:
       self._my_router_status_entry = tor_controller().get_network_status(default = None)
       self._my_router_status_entry_time = time.time()
 
