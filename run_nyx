@@ -2,7 +2,11 @@
 # Copyright 2009-2019, Damian Johnson and The Tor Project
 # See LICENSE for licensing information
 
+import os
 import sys
+
+# Use local development version of stem
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'stem'))
 
 import nyx
 import nyx.curses
